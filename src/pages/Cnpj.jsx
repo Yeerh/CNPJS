@@ -1,79 +1,125 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
+import io from 'socket.io-client';
 import logo from '../assets/logoprefeitura.png';
+
+// Conexão Socket.IO (fora do componente pra não recriar a cada render)
+const socket = io('http://localhost:3001', {
+  withCredentials: true,
+  reconnection: true,
+});
 
 export default function BuscarCnpj() {
   const navigate = useNavigate();
   const [cnpj, setCnpj] = useState('');
   const [loading, setLoading] = useState(false);
+  const [mensagem, setMensagem] = useState('');
 
-  const formatarCnpj = (v) => v.replace(/\D/g, '')
-    .replace(/(\d{2})(\d)/, '$1.$2')
-    .replace(/(\d{3})(\d)/, '$1.$2')
-    .replace(/(\d{3})(\d)/, '$1/$2')
-    .replace(/(\d{4})(\d)/, '$1-$2')
-    .slice(0,18);
+  const formatarCnpj = (v) =>
+    v.replace(/\D/g, '')
+      .replace(/(\d{2})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d)/, '$1/$2')
+      .replace(/(\d{4})(\d)/, '$1-$2')
+      .slice(0, 18);
 
-  const buscar = (e) => {
+  const buscar = async (e) => {
     e.preventDefault();
+    setMensagem('');
     setLoading(true);
 
-    // CNPJ FIXO DE TESTE
-    const empresa = {
-      cnpj: '07.563.577/0001-37',
-      razao_social: 'GOOGLE BRASIL INTERNET LTDA',
-      nome_fantasia: 'Google',
-      situacao_cadastral: 'ATIVA',
-      logradouro: 'Av. Brigadeiro Faria Lima',
-      numero: '3477',
-      complemento: '15º andar',
-      bairro: 'Itaim Bibi',
-      municipio: 'São Paulo',
-      uf: 'SP',
-      cep: '04538-133',
-      telefone: '(11) 3797-1000',
-      email: 'brasil@google.com',
-      capital_social: 'R$ 10.000.000,00',
-      natureza_juridica: 'Sociedade Empresária Limitada',
-      data_abertura: '14/10/2005'
-    };
+    const cnpjLimpo = cnpj.replace(/\D/g, '');
 
-    setTimeout(() => {
-      navigate('/dados-empresa', { state: empresa });
-    }, 1200);
+    try {
+      const response = await api.post('/cnpj', { cnpj: cnpjLimpo });
+
+      // Resposta do seu back-end exata
+      const { empresaExistente } = response.data;
+
+      if (!empresaExistente) {
+        setMensagem('Seu CNPJ está regularizado, não precisa recadastrar :)');
+        setLoading(false);
+        return;
+      }
+
+      // Empresa precisa recadastrar → vai pra tela de edição
+      setMensagem('Empresa encontrada! Redirecionando para edição...');
+      setTimeout(() => {
+        navigate('/dados-empresa', { state: empresaExistente });
+      }, 1200);
+
+    } catch (err) {
+      const erro = err.response?.data?.message || 
+                   err.response?.data?.erro || 
+                   'Erro interno do servidor';
+      setMensagem(erro);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // ESCUTA O SOCKET EM TEMPO REAL (igual seu back-end emite)
+  useEffect(() => {
+    socket.on('cnpjStatus', (data) => {
+      const cnpjAtual = cnpj.replace(/\D/g, '');
+      if (data.cnpj === cnpjAtual) {
+        if (data.empresaExistente) {
+          setMensagem('Status atualizado: Precisa recadastrar!');
+        } else {
+          setMensagem('Status atualizado: CNPJ regularizado!');
+        }
+      }
+    });
+
+    return () => {
+      socket.off('cnpjStatus');
+    };
+  }, [cnpj]);
 
   return (
     <>
       <div className="animated-background"></div>
       <header className="main-header">
-        <img src={logo} alt="Logo" />
+        <img src={logo} alt="Logo Prefeitura" />
       </header>
 
       <div className="login-container">
         <h2>Buscar Empresa</h2>
-        <p style={{color:'#aaa', textAlign:'center', marginBottom:'20px'}}>
-          Use o CNPJ de teste abaixo para continuar:
-        </p>
-        <code style={{display:'block', background:'#333', padding:'15px', borderRadius:'10px', color:'#86efac', fontSize:'20px', textAlign:'center', marginBottom:'25px'}}>
-          07.563.577/0001-37
-        </code>
 
         <form onSubmit={buscar}>
           <div className="input-group">
-            <label>CNPJ</label>
+            <label>CNPJ da Empresa</label>
             <input
+              type="text"
               value={cnpj}
               onChange={(e) => setCnpj(formatarCnpj(e.target.value))}
               placeholder="00.000.000/0000-00"
               maxLength={18}
               required
+              autoFocus
             />
           </div>
-          <button type="submit" disabled={loading}>
-            {loading ? 'Carregando dados...' : 'Buscar e Editar Dados'}
+
+          <button type="submit" disabled={loading} className="submit-btn">
+            {loading ? 'Buscando...' : 'Buscar e Editar Dados'}
           </button>
         </form>
+
+        {mensagem && (
+          <p
+            className={mensagem.includes('regularizado') || mensagem.includes('não precisa') ? 'success' : 'error'}
+            style={{ marginTop: '20px', textAlign: 'center', fontWeight: '600' }}
+          >
+            {mensagem}
+          </p>
+        )}
+
+        {/* Só pra teste rápido */}
+        <p style={{ marginTop: '30px', fontSize: '14px', color: '#888', textAlign: 'center' }}>
+          CNPJ de teste (Google Brasil):<br />
+          <strong style={{ color: '#86efac' }}>07.563.577/0001-37</strong>
+        </p>
       </div>
     </>
   );
